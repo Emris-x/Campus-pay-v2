@@ -1,21 +1,27 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-export default function PaymentHistory({ onBack, onOpenPayment }) {
+export default function PaymentHistory({
+  onBack,
+  onOpenPayment,
+  onOpenReceipt
+}) {
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    loadPayments();
+    loadHistory();
   }, []);
 
-  async function loadPayments() {
+  async function loadHistory() {
     setLoading(true);
     setError("");
 
     const {
-      data: { user }
+      data: {
+        user
+      }
     } = await supabase.auth.getUser();
 
     if (!user) {
@@ -24,18 +30,24 @@ export default function PaymentHistory({ onBack, onOpenPayment }) {
       return;
     }
 
-    const { data, error: paymentError } = await supabase
-      .from("v2_payment_batches")
+    const {
+      data,
+      error: historyError
+    } = await supabase
+      .from("v2_payment_items")
       .select("*")
       .eq("account_owner_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", {
+        ascending: false
+      });
 
-    if (paymentError) {
+    if (historyError) {
       setError("Unable to load your payment history.");
-    } else {
-      setPayments(data || []);
+      setLoading(false);
+      return;
     }
 
+    setPayments(data || []);
     setLoading(false);
   }
 
@@ -43,79 +55,240 @@ export default function PaymentHistory({ onBack, onOpenPayment }) {
     return `₦${Number(amount || 0).toLocaleString("en-NG")}`;
   }
 
-  function formatDate(date) {
-    return new Date(date).toLocaleString("en-NG", {
+  function formatDate(value) {
+    if (!value) {
+      return "—";
+    }
+
+    return new Date(value).toLocaleString("en-NG", {
       dateStyle: "medium",
       timeStyle: "short"
     });
   }
 
-  function formatStatus(status) {
-    return String(status || "")
-      .replaceAll("_", " ")
-      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  function getStatusLabel(status) {
+    switch (status) {
+      case "AWAITING_PAYMENT":
+        return "Awaiting Payment";
+
+      case "PAYMENT_SUBMITTED":
+        return "Payment Submitted";
+
+      case "PAYMENT_RECEIVED":
+        return "Payment Received";
+
+      case "PROCESSING_FACULTY_PAYMENT":
+        return "Faculty Payment Processing";
+
+      case "VERIFIED":
+        return "Verified";
+
+      case "DECLINED":
+        return "Declined";
+
+      case "REPROCESSING":
+        return "Reprocessing";
+
+      default:
+        return status || "Unknown";
+    }
+  }
+
+  function getStatusClass(status) {
+    switch (status) {
+      case "VERIFIED":
+        return "status-success";
+
+      case "DECLINED":
+        return "status-error";
+
+      case "PAYMENT_RECEIVED":
+      case "PROCESSING_FACULTY_PAYMENT":
+        return "status-processing";
+
+      case "PAYMENT_SUBMITTED":
+      case "REPROCESSING":
+        return "status-pending";
+
+      default:
+        return "status-awaiting";
+    }
+  }
+
+  function handleOpen(payment) {
+    if (payment.status === "VERIFIED" && onOpenReceipt) {
+      onOpenReceipt(payment.id);
+      return;
+    }
+
+    if (onOpenPayment) {
+      onOpenPayment(payment.id);
+    }
+  }
+
+  if (loading) {
+    return (
+      <section className="history-page">
+        <div className="page-header">
+          <button
+            type="button"
+            onClick={onBack}
+          >
+            Back
+          </button>
+
+          <div>
+            <p className="eyebrow">Payments</p>
+            <h1>Payment History</h1>
+          </div>
+        </div>
+
+        <div className="payment-card">
+          <p>Loading payment history...</p>
+        </div>
+      </section>
+    );
   }
 
   return (
     <section className="history-page">
       <div className="page-header">
-        <button type="button" onClick={onBack}>
+        <button
+          type="button"
+          onClick={onBack}
+        >
           Back
         </button>
 
         <div>
-          <p className="eyebrow">Campus Pay</p>
+          <p className="eyebrow">Payments</p>
           <h1>Payment History</h1>
         </div>
       </div>
 
-      {loading && <p>Loading payment history...</p>}
+      {error && (
+        <div className="payment-card">
+          <p className="form-error">{error}</p>
 
-      {error && <p className="form-error">{error}</p>}
-
-      {!loading && !error && payments.length === 0 && (
-        <div className="empty-state">
-          <h2>No payments yet</h2>
-          <p>Your Campus Pay transactions will appear here.</p>
+          <button
+            type="button"
+            onClick={loadHistory}
+          >
+            Try Again
+          </button>
         </div>
       )}
 
-      {!loading && payments.length > 0 && (
+      {!error && payments.length === 0 && (
+        <div className="payment-card empty-state">
+          <h2>No Payments Yet</h2>
+
+          <p>
+            Your Campus Pay payment history will appear here
+            after you create a payment request.
+          </p>
+
+          <button
+            type="button"
+            onClick={onBack}
+          >
+            Back to Dashboard
+          </button>
+        </div>
+      )}
+
+      {!error && payments.length > 0 && (
         <div className="history-list">
           {payments.map((payment) => (
-            <article className="history-card" key={payment.id}>
-              <div>
-                <p className="history-date">
-                  {formatDate(payment.created_at)}
-                </p>
+            <article
+              className="history-card"
+              key={payment.id}
+            >
+              <div className="history-card-header">
+                <div>
+                  <p className="eyebrow">
+                    {payment.reference || "Campus Pay Payment"}
+                  </p>
 
-                <h2>
-                  {payment.beneficiary_full_name || "Student"}
-                </h2>
+                  <h2>
+                    {payment.beneficiary_name}
+                  </h2>
+                </div>
 
-                <p>
-                  {payment.beneficiary_department || "Department"}
-                </p>
-
-                <strong>
-                  {formatCurrency(payment.total_amount)}
-                </strong>
+                <span
+                  className={`status-badge ${getStatusClass(
+                    payment.status
+                  )}`}
+                >
+                  {getStatusLabel(payment.status)}
+                </span>
               </div>
 
-              <div className="history-side">
-                <span
-                  className={`payment-status status-${payment.status}`}
-                >
-                  {formatStatus(payment.status)}
-                </span>
+              <div className="history-details">
+                <div>
+                  <span>Faculty</span>
+                  <strong>
+                    {payment.beneficiary_faculty || "—"}
+                  </strong>
+                </div>
 
+                <div>
+                  <span>Department</span>
+                  <strong>
+                    {payment.beneficiary_department || "—"}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>Destination</span>
+                  <strong>
+                    {payment.destination_department
+                      ? `${payment.destination_faculty} — ${payment.destination_department}`
+                      : payment.destination_faculty || "—"}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>Total</span>
+                  <strong>
+                    {formatCurrency(payment.total_amount)}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>Date</span>
+                  <strong>
+                    {formatDate(payment.created_at)}
+                  </strong>
+                </div>
+              </div>
+
+              {payment.status === "DECLINED" && (
+                <div className="history-notice">
+                  <strong>Declined</strong>
+
+                  {payment.decline_reason && (
+                    <p>
+                      Reason: {payment.decline_reason}
+                    </p>
+                  )}
+
+                  {payment.decline_reason_details && (
+                    <p>
+                      {payment.decline_reason_details}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="history-actions">
                 <button
                   type="button"
-                  onClick={() =>
-                    onOpenPayment?.(payment.id)
-                  }
+                  onClick={() => handleOpen(payment)}
                 >
-                  View
+                  {payment.status === "VERIFIED"
+                    ? "View Receipt"
+                    : "View Payment"}
                 </button>
               </div>
             </article>
