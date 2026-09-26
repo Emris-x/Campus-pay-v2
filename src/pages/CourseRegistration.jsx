@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 const MAX_PAYMENTS = 10;
 
-export default function CourseRegistration({ onBack, onContinue }) {
+export default function CourseRegistration({
+  onBack,
+  onPaymentCreated
+}) {
   const [mode, setMode] = useState("self");
   const [profile, setProfile] = useState(null);
   const [destinations, setDestinations] = useState([]);
@@ -14,10 +17,6 @@ export default function CourseRegistration({ onBack, onContinue }) {
     }
   ]);
 
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-
   const [beneficiary, setBeneficiary] = useState({
     fullName: "",
     matricNumber: "",
@@ -25,6 +24,10 @@ export default function CourseRegistration({ onBack, onContinue }) {
     faculty: "",
     department: ""
   });
+
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     loadData();
@@ -35,31 +38,37 @@ export default function CourseRegistration({ onBack, onContinue }) {
     setError("");
 
     const {
-      data: { user }
+      data: { user },
+      error: userError
     } = await supabase.auth.getUser();
 
-    if (!user) {
+    if (userError || !user) {
       setError("Your session has expired. Please log in again.");
       setLoading(false);
       return;
     }
 
-    const [{ data: profileData, error: profileError }, { data: destinationData, error: destinationError }] =
-      await Promise.all([
-        supabase
-          .from("v2_user_profiles")
-          .select(
-            "full_name, matriculation_number, registration_number, faculty, department"
-          )
-          .eq("id", user.id)
-          .maybeSingle(),
+    const [
+      { data: profileData, error: profileError },
+      { data: destinationData, error: destinationError }
+    ] = await Promise.all([
+      supabase
+        .from("v2_user_profiles")
+        .select(
+          "full_name, email, phone, matriculation_number, registration_number, faculty, department"
+        )
+        .eq("id", user.id)
+        .maybeSingle(),
 
-        supabase
-          .from("v2_payment_destinations")
-          .select("id, name, bank_name, account_name, account_number")
-          .eq("is_active", true)
-          .order("name")
-      ]);
+      supabase
+        .from("v2_destinations")
+        .select(
+          "id, faculty, department, bank_name, account_name, account_number"
+        )
+        .eq("is_active", true)
+        .order("faculty", { ascending: true })
+        .order("department", { ascending: true })
+    ]);
 
     if (profileError) {
       setError("Unable to load your profile.");
@@ -73,19 +82,47 @@ export default function CourseRegistration({ onBack, onContinue }) {
       return;
     }
 
+    if (!profileData) {
+      setError(
+        "Your Campus Pay profile could not be found. Please contact support."
+      );
+      setLoading(false);
+      return;
+    }
+
     setProfile(profileData);
     setDestinations(destinationData || []);
 
     setBeneficiary({
-      fullName: profileData?.full_name || "",
-      matricNumber: profileData?.matriculation_number || "",
-      registrationNumber: profileData?.registration_number || "",
-      faculty: profileData?.faculty || "",
-      department: profileData?.department || ""
+      fullName: profileData.full_name || "",
+      matricNumber: profileData.matriculation_number || "",
+      registrationNumber: profileData.registration_number || "",
+      faculty: profileData.faculty || "",
+      department: profileData.department || ""
     });
 
     setLoading(false);
   }
+
+  const faculties = useMemo(() => {
+    return [...new Set(destinations.map((item) => item.faculty))]
+      .filter(Boolean)
+      .sort();
+  }, [destinations]);
+
+  const beneficiaryDepartments = useMemo(() => {
+    if (!beneficiary.faculty) {
+      return [];
+    }
+
+    return [
+      ...new Set(
+        destinations
+          .filter((item) => item.faculty === beneficiary.faculty)
+          .map((item) => item.department)
+      )
+    ].filter(Boolean).sort();
+  }, [destinations, beneficiary.faculty]);
 
   function changeMode(nextMode) {
     setMode(nextMode);
@@ -115,10 +152,20 @@ export default function CourseRegistration({ onBack, onContinue }) {
   function updateBeneficiary(event) {
     const { name, value } = event.target;
 
-    setBeneficiary((current) => ({
-      ...current,
-      [name]: value
-    }));
+    setBeneficiary((current) => {
+      if (name === "faculty") {
+        return {
+          ...current,
+          faculty: value,
+          department: ""
+        };
+      }
+
+      return {
+        ...current,
+        [name]: value
+      };
+    });
   }
 
   function updateItem(index, field, value) {
@@ -149,8 +196,12 @@ export default function CourseRegistration({ onBack, onContinue }) {
     );
   }
 
-  async function handleContinue(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
+
+    if (submitting) {
+      return;
+    }
 
     setError("");
 
@@ -161,46 +212,82 @@ export default function CourseRegistration({ onBack, onContinue }) {
       !beneficiary.faculty.trim() ||
       !beneficiary.department.trim()
     ) {
-      setError("Please complete all beneficiary information.");
+      setError("Please complete all student information.");
       return;
     }
 
     const cleanedItems = items.map((item) => ({
-      destinationId: item.destinationId,
-      amount: Number(item.amount)
+      destination_id: item.destinationId,
+      course_amount: Number(item.amount)
     }));
 
-    if (
-      cleanedItems.some(
-        (item) =>
-          !item.destinationId ||
-          !Number.isFinite(item.amount) ||
-          item.amount <= 0
-      )
-    ) {
-      setError("Please select a destination and enter a valid amount for every payment.");
+    const invalidItem = cleanedItems.some(
+      (item) =>
+        !item.destination_id ||
+        !Number.isFinite(item.course_amount) ||
+        item.course_amount <= 0
+    );
+
+    if (invalidItem) {
+      setError(
+        "Please select a payment destination and enter a valid amount for every payment."
+      );
       return;
     }
 
     setSubmitting(true);
 
-    const { data, error: rpcError } = await supabase.rpc(
-      "create_payment_batch",
-      {
-        p_beneficiary_full_name: beneficiary.fullName.trim(),
-        p_beneficiary_matriculation_number:
+    const {
+      data: batchId,
+      error: rpcError
+    } = await supabase.rpc("v2_create_payment_batch", {
+      p_items: cleanedItems.map((item) => ({
+        ...item,
+        payment_for:
+          mode === "self" ? "MYSELF" : "SOMEONE_ELSE",
+        payer_name: profile?.full_name || "",
+        payer_email: profile?.email || "",
+        payer_phone: profile?.phone || "",
+        beneficiary_name: beneficiary.fullName.trim(),
+        beneficiary_matriculation_number:
           beneficiary.matricNumber.trim(),
-        p_beneficiary_registration_number:
+        beneficiary_registration_number:
           beneficiary.registrationNumber.trim(),
-        p_beneficiary_faculty: beneficiary.faculty.trim(),
-        p_beneficiary_department: beneficiary.department.trim(),
-        p_items: cleanedItems
-      }
-    );
+        beneficiary_faculty: beneficiary.faculty.trim(),
+        beneficiary_department: beneficiary.department.trim()
+      }))
+    });
 
     if (rpcError) {
       setError(
-        rpcError.message || "Unable to create the payment request."
+        rpcError.message ||
+          "Unable to create the payment request. Please try again."
+      );
+      setSubmitting(false);
+      return;
+    }
+
+    if (!batchId) {
+      setError("Payment request was created without a valid batch.");
+      setSubmitting(false);
+      return;
+    }
+
+    const {
+      data: firstItem,
+      error: itemError
+    } = await supabase
+      .from("v2_payment_items")
+      .select("id")
+      .eq("batch_id", batchId)
+      .eq("account_owner_id", profile?.id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (itemError || !firstItem) {
+      setError(
+        "Payment request was created, but we could not open its payment details. Please check Payment History."
       );
       setSubmitting(false);
       return;
@@ -208,15 +295,17 @@ export default function CourseRegistration({ onBack, onContinue }) {
 
     setSubmitting(false);
 
-    if (onContinue) {
-      onContinue(data);
+    if (onPaymentCreated) {
+      onPaymentCreated(firstItem.id);
     }
   }
 
   if (loading) {
     return (
       <section className="payment-page">
-        <p>Loading payment information...</p>
+        <div className="payment-card">
+          <p>Loading payment information...</p>
+        </div>
       </section>
     );
   }
@@ -234,7 +323,7 @@ export default function CourseRegistration({ onBack, onContinue }) {
         </div>
       </div>
 
-      <div className="payment-card">
+      <form className="payment-card" onSubmit={handleSubmit}>
         <h2>Who are you paying for?</h2>
 
         <div className="choice-group">
@@ -251,9 +340,16 @@ export default function CourseRegistration({ onBack, onContinue }) {
             className={mode === "third_party" ? "selected" : ""}
             onClick={() => changeMode("third_party")}
           >
-            Another Student
+            Someone Else
           </button>
         </div>
+
+        {mode === "third_party" && (
+          <p className="form-hint">
+            You are the payer. Enter the details of the student whose
+            registration you are paying for.
+          </p>
+        )}
 
         <h2>Student Information</h2>
 
@@ -292,24 +388,42 @@ export default function CourseRegistration({ onBack, onContinue }) {
         />
 
         <label htmlFor="beneficiary-faculty">Faculty</label>
-        <input
+        <select
           id="beneficiary-faculty"
           name="faculty"
           value={beneficiary.faculty}
           onChange={updateBeneficiary}
-          readOnly={mode === "self"}
+          disabled={mode === "self"}
           required
-        />
+        >
+          <option value="">Select faculty</option>
 
-        <label htmlFor="beneficiary-department">Department</label>
-        <input
+          {faculties.map((faculty) => (
+            <option key={faculty} value={faculty}>
+              {faculty}
+            </option>
+          ))}
+        </select>
+
+        <label htmlFor="beneficiary-department">
+          Department
+        </label>
+        <select
           id="beneficiary-department"
           name="department"
           value={beneficiary.department}
           onChange={updateBeneficiary}
-          readOnly={mode === "self"}
+          disabled={mode === "self" || !beneficiary.faculty}
           required
-        />
+        >
+          <option value="">Select department</option>
+
+          {beneficiaryDepartments.map((department) => (
+            <option key={department} value={department}>
+              {department}
+            </option>
+          ))}
+        </select>
 
         <div className="payment-count">
           <label htmlFor="payment-count">
@@ -321,11 +435,15 @@ export default function CourseRegistration({ onBack, onContinue }) {
             value={items.length}
             onChange={updatePaymentCount}
           >
-            {Array.from({ length: MAX_PAYMENTS }, (_, index) => (
-              <option key={index + 1} value={index + 1}>
-                {index + 1} {index === 0 ? "Payment" : "Payments"}
-              </option>
-            ))}
+            {Array.from(
+              { length: MAX_PAYMENTS },
+              (_, index) => (
+                <option key={index + 1} value={index + 1}>
+                  {index + 1}{" "}
+                  {index === 0 ? "Payment" : "Payments"}
+                </option>
+              )
+            )}
           </select>
         </div>
 
@@ -358,13 +476,14 @@ export default function CourseRegistration({ onBack, onContinue }) {
                   key={destination.id}
                   value={destination.id}
                 >
-                  {destination.name}
+                  {destination.faculty} —{" "}
+                  {destination.department}
                 </option>
               ))}
             </select>
 
             <label htmlFor={`amount-${index}`}>
-              Amount
+              Course Registration Amount
             </label>
 
             <input
@@ -385,10 +504,12 @@ export default function CourseRegistration({ onBack, onContinue }) {
 
         {error && <p className="form-error">{error}</p>}
 
-        <button type="submit" disabled={submitting} onClick={handleContinue}>
-          {submitting ? "Preparing Payment..." : "Continue"}
+        <button type="submit" disabled={submitting}>
+          {submitting
+            ? "Preparing Payment..."
+            : "Continue"}
         </button>
-      </div>
+      </form>
     </section>
   );
-          }
+}
