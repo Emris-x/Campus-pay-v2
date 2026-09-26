@@ -1,8 +1,13 @@
-import { Navigate } from "react-router-dom";
-
 export default function ProtectedRoute({ children, session }) {
   if (!session) {
-    return <Navigate to="/login" replace />;
+    return (
+      <section className="auth-page">
+        <div className="auth-card">
+          <h1>Campus Pay</h1>
+          <p>Please sign in to continue.</p>
+        </div>
+      </section>
+    );
   }
 
   return children;
