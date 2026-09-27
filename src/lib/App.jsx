@@ -4,6 +4,7 @@ import { supabase } from "./lib/supabase";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import CourseRegistration from "./pages/CourseRegistration";
 import PaymentDetails from "./pages/PaymentDetails";
@@ -17,6 +18,11 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState("dashboard");
   const [selectedPaymentId, setSelectedPaymentId] = useState(null);
+
+  const [resetData, setResetData] = useState({
+    email: "",
+    resetId: ""
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -67,6 +73,19 @@ function App() {
     setPage("receipt");
   }
 
+  function startPasswordReset(data) {
+    setResetData(data);
+    setPage("reset-password");
+  }
+
+  function finishPasswordReset() {
+    setResetData({
+      email: "",
+      resetId: ""
+    });
+    setPage("login");
+  }
+
   async function handleSignOut() {
     await supabase.auth.signOut();
     setSelectedPaymentId(null);
@@ -86,17 +105,25 @@ function App() {
 
   if (!session) {
     if (page === "signup") {
-      return (
-        <Signup
-          onLogin={() => setPage("login")}
-        />
-      );
+      return <Signup onLogin={() => setPage("login")} />;
     }
 
     if (page === "forgot-password") {
       return (
         <ForgotPassword
-          onLogin={() => setPage("login")}
+          onBack={() => setPage("login")}
+          onCodeSent={startPasswordReset}
+        />
+      );
+    }
+
+    if (page === "reset-password") {
+      return (
+        <ResetPassword
+          email={resetData.email}
+          resetId={resetData.resetId}
+          onBack={() => setPage("forgot-password")}
+          onComplete={finishPasswordReset}
         />
       );
     }
