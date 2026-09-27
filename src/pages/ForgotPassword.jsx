@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
 
-export default function ForgotPassword({ onBack }) {
+export default function ForgotPassword({ onBack, onCodeSent }) {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -13,29 +13,51 @@ export default function ForgotPassword({ onBack }) {
     setError("");
     setMessage("");
 
-    if (!email.trim()) {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail) {
       setError("Please enter your registered email address.");
       return;
     }
 
     setLoading(true);
 
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
-      email.trim(),
-      {
-        redirectTo: `${window.location.origin}/reset-password`
+    try {
+      const { data, error: functionError } =
+        await supabase.functions.invoke("campus-pay-password-reset", {
+          body: {
+            action: "request",
+            email: normalizedEmail
+          }
+        });
+
+      if (functionError) {
+        throw functionError;
       }
-    );
 
-    if (resetError) {
-      setError("We could not process the password reset request.");
-    } else {
+      if (!data?.resetId) {
+        throw new Error("Password reset request could not be started.");
+      }
+
       setMessage(
-        "If an account exists with this email, a password recovery email has been sent."
+        "If an account exists with this email, a verification code has been sent."
       );
-    }
 
-    setLoading(false);
+      if (typeof onCodeSent === "function") {
+        onCodeSent({
+          email: normalizedEmail,
+          resetId: data.resetId
+        });
+      }
+    } catch (requestError) {
+      console.error("Password reset request error:", requestError);
+
+      setError(
+        "We could not process the password reset request right now. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -56,6 +78,7 @@ export default function ForgotPassword({ onBack }) {
             onChange={(event) => setEmail(event.target.value)}
             placeholder="Enter your registered email"
             autoComplete="email"
+            disabled={loading}
             required
           />
 
@@ -64,11 +87,11 @@ export default function ForgotPassword({ onBack }) {
           {message && <p className="form-success">{message}</p>}
 
           <button type="submit" disabled={loading}>
-            {loading ? "Sending..." : "Send Recovery Email"}
+            {loading ? "Sending..." : "Send Verification Code"}
           </button>
         </form>
 
-        <button type="button" onClick={onBack}>
+        <button type="button" onClick={onBack} disabled={loading}>
           Back to Login
         </button>
       </div>
