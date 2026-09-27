@@ -36,13 +36,54 @@ export default function Signup({ onLogin }) {
     setError("");
     setMessage("");
 
+    const fullName = form.fullName.trim();
+    const email = form.email.trim().toLowerCase();
+    const phone = form.phone.trim();
+    const matricNumber = form.matricNumber.trim();
+    const registrationNumber = form.registrationNumber.trim();
+    const faculty = form.faculty.trim();
+    const department = form.department.trim();
+    const agentCode = form.agentCode.trim();
+
     if (!acceptedTerms) {
-      setError("You must agree to the Campus Pay terms and conditions.");
+      setError(
+        "You must agree to the Campus Pay Terms and Conditions and Privacy Policy."
+      );
       return;
     }
 
-    if (form.password !== form.confirmPassword) {
-      setError("Passwords do not match.");
+    if (!fullName) {
+      setError("Please enter your full name.");
+      return;
+    }
+
+    if (!email) {
+      setError("Please enter your email address.");
+      return;
+    }
+
+    if (!phone) {
+      setError("Please enter your phone number.");
+      return;
+    }
+
+    if (!matricNumber) {
+      setError("Please enter your matriculation number.");
+      return;
+    }
+
+    if (!registrationNumber) {
+      setError("Please enter your registration number.");
+      return;
+    }
+
+    if (!faculty) {
+      setError("Please enter your faculty.");
+      return;
+    }
+
+    if (!department) {
+      setError("Please enter your department.");
       return;
     }
 
@@ -51,39 +92,130 @@ export default function Signup({ onLogin }) {
       return;
     }
 
-    setLoading(true);
-
-    const { data, error: signupError } = await supabase.auth.signUp({
-      email: form.email.trim(),
-      password: form.password,
-      options: {
-        data: {
-          full_name: form.fullName.trim(),
-          phone: form.phone.trim(),
-          matriculation_number: form.matricNumber.trim(),
-          registration_number: form.registrationNumber.trim(),
-          faculty: form.faculty.trim(),
-          department: form.department.trim(),
-          agent_code: form.agentCode.trim() || null
-        }
-      }
-    });
-
-    if (signupError) {
-      setError(signupError.message);
-      setLoading(false);
+    if (form.password !== form.confirmPassword) {
+      setError("Passwords do not match.");
       return;
     }
 
-    if (data.user) {
-      setMessage(
-        data.session
-          ? "Account created successfully."
-          : "Account created. Please check your email to verify your account."
-      );
-    }
+    setLoading(true);
 
-    setLoading(false);
+    try {
+      /*
+       * Make sure the current legal documents exist before
+       * allowing a new Campus Pay account to be created.
+       */
+      const { data: legalDocuments, error: legalError } =
+        await supabase
+          .from("v2_legal_documents")
+          .select("id, document_type, version")
+          .eq("is_current", true)
+          .in("document_type", ["terms", "privacy"]);
+
+      if (legalError) {
+        setError(
+          "Unable to verify the Campus Pay registration documents. Please try again."
+        );
+        setLoading(false);
+        return;
+      }
+
+      const hasTerms = legalDocuments?.some(
+        (document) => document.document_type === "terms"
+      );
+
+      const hasPrivacy = legalDocuments?.some(
+        (document) => document.document_type === "privacy"
+      );
+
+      if (!hasTerms || !hasPrivacy) {
+        setError(
+          "Campus Pay registration documents are not currently available. Please try again later."
+        );
+        setLoading(false);
+        return;
+      }
+
+      /*
+       * Supabase Auth creates the account.
+       *
+       * The database trigger v2_handle_new_user()
+       * automatically creates the corresponding V2
+       * student profile and records legal acceptance.
+       */
+      const { data, error: signupError } =
+        await supabase.auth.signUp({
+          email,
+          password: form.password,
+          options: {
+            data: {
+              full_name: fullName,
+              phone,
+              matriculation_number: matricNumber,
+              registration_number: registrationNumber,
+              faculty,
+              department,
+              agent_code: agentCode || null,
+              accepted_terms: true
+            }
+          }
+        });
+
+      if (signupError) {
+        setError(signupError.message);
+        setLoading(false);
+        return;
+      }
+
+      if (!data.user) {
+        setError(
+          "The account could not be created. Please try again."
+        );
+        setLoading(false);
+        return;
+      }
+
+      if (data.session) {
+        const {
+          data: profile,
+          error: profileError
+        } = await supabase
+          .from("v2_user_profiles")
+          .select("legal_accepted")
+          .eq("id", data.user.id)
+          .maybeSingle();
+
+        if (profileError) {
+          setError(
+            "Your account was created, but your profile could not be loaded. Please contact Campus Pay support."
+          );
+          setLoading(false);
+          return;
+        }
+
+        if (!profile?.legal_accepted) {
+          setError(
+            "Your account was created, but legal acceptance could not be completed. Please contact Campus Pay support."
+          );
+          setLoading(false);
+          return;
+        }
+
+        setMessage(
+          "Account created successfully. Welcome to Campus Pay."
+        );
+      } else {
+        setMessage(
+          "Account created successfully. Please check your email to verify your account before signing in."
+        );
+      }
+    } catch (submitError) {
+      setError(
+        submitError?.message ||
+          "Something went wrong while creating your account."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -95,17 +227,24 @@ export default function Signup({ onLogin }) {
         </div>
 
         <form onSubmit={handleSubmit}>
-          <label htmlFor="fullName">Full Name</label>
+          <label htmlFor="fullName">
+            Full Name
+          </label>
+
           <input
             id="fullName"
             name="fullName"
             value={form.fullName}
             onChange={updateField}
             placeholder="Enter your full name"
+            autoComplete="name"
             required
           />
 
-          <label htmlFor="email">Email</label>
+          <label htmlFor="email">
+            Email
+          </label>
+
           <input
             id="email"
             name="email"
@@ -117,7 +256,10 @@ export default function Signup({ onLogin }) {
             required
           />
 
-          <label htmlFor="phone">Phone Number</label>
+          <label htmlFor="phone">
+            Phone Number
+          </label>
+
           <input
             id="phone"
             name="phone"
@@ -125,10 +267,14 @@ export default function Signup({ onLogin }) {
             value={form.phone}
             onChange={updateField}
             placeholder="Enter your phone number"
+            autoComplete="tel"
             required
           />
 
-          <label htmlFor="matricNumber">Matriculation Number</label>
+          <label htmlFor="matricNumber">
+            Matriculation Number
+          </label>
+
           <input
             id="matricNumber"
             name="matricNumber"
@@ -138,7 +284,10 @@ export default function Signup({ onLogin }) {
             required
           />
 
-          <label htmlFor="registrationNumber">Registration Number</label>
+          <label htmlFor="registrationNumber">
+            Registration Number
+          </label>
+
           <input
             id="registrationNumber"
             name="registrationNumber"
@@ -148,7 +297,10 @@ export default function Signup({ onLogin }) {
             required
           />
 
-          <label htmlFor="faculty">Faculty</label>
+          <label htmlFor="faculty">
+            Faculty
+          </label>
+
           <input
             id="faculty"
             name="faculty"
@@ -158,7 +310,10 @@ export default function Signup({ onLogin }) {
             required
           />
 
-          <label htmlFor="department">Department</label>
+          <label htmlFor="department">
+            Department
+          </label>
+
           <input
             id="department"
             name="department"
@@ -171,21 +326,29 @@ export default function Signup({ onLogin }) {
           <label htmlFor="agentCode">
             Agent Code <span>(Optional)</span>
           </label>
+
           <input
             id="agentCode"
             name="agentCode"
             value={form.agentCode}
             onChange={updateField}
             placeholder="Enter agent code if applicable"
+            autoComplete="off"
           />
 
-          <label htmlFor="password">Password</label>
+          <label htmlFor="password">
+            Password
+          </label>
 
           <div className="password-field">
             <input
               id="password"
               name="password"
-              type={showPassword ? "text" : "password"}
+              type={
+                showPassword
+                  ? "text"
+                  : "password"
+              }
               value={form.password}
               onChange={updateField}
               placeholder="Create a password"
@@ -195,18 +358,28 @@ export default function Signup({ onLogin }) {
 
             <button
               type="button"
-              onClick={() => setShowPassword((current) => !current)}
+              onClick={() =>
+                setShowPassword(
+                  (current) => !current
+                )
+              }
             >
               {showPassword ? "Hide" : "Show"}
             </button>
           </div>
 
-          <label htmlFor="confirmPassword">Confirm Password</label>
+          <label htmlFor="confirmPassword">
+            Confirm Password
+          </label>
 
           <input
             id="confirmPassword"
             name="confirmPassword"
-            type={showPassword ? "text" : "password"}
+            type={
+              showPassword
+                ? "text"
+                : "password"
+            }
             value={form.confirmPassword}
             onChange={updateField}
             placeholder="Confirm your password"
@@ -218,27 +391,47 @@ export default function Signup({ onLogin }) {
             <input
               type="checkbox"
               checked={acceptedTerms}
-              onChange={(event) => setAcceptedTerms(event.target.checked)}
+              onChange={(event) =>
+                setAcceptedTerms(
+                  event.target.checked
+                )
+              }
             />
 
             <span>
-              I agree to the Campus Pay Terms and Conditions and Privacy
-              Policy.
+              I agree to the Campus Pay Terms and
+              Conditions and Privacy Policy.
             </span>
           </label>
 
-          {error && <p className="form-error">{error}</p>}
+          {error && (
+            <p className="form-error">
+              {error}
+            </p>
+          )}
 
-          {message && <p className="form-success">{message}</p>}
+          {message && (
+            <p className="form-success">
+              {message}
+            </p>
+          )}
 
-          <button type="submit" disabled={loading}>
-            {loading ? "Creating Account..." : "Create Account"}
+          <button
+            type="submit"
+            disabled={loading}
+          >
+            {loading
+              ? "Creating Account..."
+              : "Create Account"}
           </button>
         </form>
 
         <p>
           Already have an account?{" "}
-          <button type="button" onClick={onLogin}>
+          <button
+            type="button"
+            onClick={onLogin}
+          >
             Sign In
           </button>
         </p>
