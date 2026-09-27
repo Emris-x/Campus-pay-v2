@@ -1,0 +1,12 @@
+{
+  "name": "Campus Pay",
+  "short_name": "Campus Pay",
+  "description": "A student payment assistance platform for UNICAL students.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "orientation": "portrait",
+  "scope": "/",
+  "lang": "en-NG"
+}
