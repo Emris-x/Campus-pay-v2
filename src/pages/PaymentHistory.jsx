@@ -19,9 +19,7 @@ export default function PaymentHistory({
     setError("");
 
     const {
-      data: {
-        user
-      }
+      data: { user }
     } = await supabase.auth.getUser();
 
     if (!user) {
@@ -30,16 +28,11 @@ export default function PaymentHistory({
       return;
     }
 
-    const {
-      data,
-      error: historyError
-    } = await supabase
+    const { data, error: historyError } = await supabase
       .from("v2_payment_items")
       .select("*")
       .eq("account_owner_id", user.id)
-      .order("created_at", {
-        ascending: false
-      });
+      .order("created_at", { ascending: false });
 
     if (historyError) {
       setError("Unable to load your payment history.");
@@ -56,9 +49,7 @@ export default function PaymentHistory({
   }
 
   function formatDate(value) {
-    if (!value) {
-      return "—";
-    }
+    if (!value) return "—";
 
     return new Date(value).toLocaleString("en-NG", {
       dateStyle: "medium",
@@ -67,62 +58,45 @@ export default function PaymentHistory({
   }
 
   function getStatusLabel(status) {
-    switch (status) {
-      case "AWAITING_PAYMENT":
-        return "Awaiting Payment";
+    const labels = {
+      AWAITING_PAYMENT: "Awaiting Payment",
+      PAYMENT_SUBMITTED: "Payment Submitted",
+      PAYMENT_RECEIVED: "Payment Received",
+      PROCESSING_FACULTY_PAYMENT: "Faculty Payment Processing",
+      VERIFIED: "Verified",
+      DECLINED: "Declined",
+      REPROCESSING: "Reprocessing"
+    };
 
-      case "PAYMENT_SUBMITTED":
-        return "Payment Submitted";
-
-      case "PAYMENT_RECEIVED":
-        return "Payment Received";
-
-      case "PROCESSING_FACULTY_PAYMENT":
-        return "Faculty Payment Processing";
-
-      case "VERIFIED":
-        return "Verified";
-
-      case "DECLINED":
-        return "Declined";
-
-      case "REPROCESSING":
-        return "Reprocessing";
-
-      default:
-        return status || "Unknown";
-    }
+    return labels[status] || "Unknown";
   }
 
   function getStatusClass(status) {
-    switch (status) {
-      case "VERIFIED":
-        return "status-success";
+    if (status === "VERIFIED") return "status-success";
+    if (status === "DECLINED") return "status-error";
 
-      case "DECLINED":
-        return "status-error";
-
-      case "PAYMENT_RECEIVED":
-      case "PROCESSING_FACULTY_PAYMENT":
-        return "status-processing";
-
-      case "PAYMENT_SUBMITTED":
-      case "REPROCESSING":
-        return "status-pending";
-
-      default:
-        return "status-awaiting";
+    if (
+      status === "PAYMENT_RECEIVED" ||
+      status === "PROCESSING_FACULTY_PAYMENT"
+    ) {
+      return "status-processing";
     }
+
+    if (
+      status === "PAYMENT_SUBMITTED" ||
+      status === "REPROCESSING"
+    ) {
+      return "status-pending";
+    }
+
+    return "status-awaiting";
   }
 
   function handleOpen(payment) {
-    if (payment.status === "VERIFIED" && onOpenReceipt) {
-      onOpenReceipt(payment.id);
-      return;
-    }
-
-    if (onOpenPayment) {
-      onOpenPayment(payment.id);
+    if (payment.status === "VERIFIED") {
+      onOpenReceipt?.(payment.id);
+    } else {
+      onOpenPayment?.(payment.id);
     }
   }
 
@@ -130,10 +104,7 @@ export default function PaymentHistory({
     return (
       <section className="history-page">
         <div className="page-header">
-          <button
-            type="button"
-            onClick={onBack}
-          >
+          <button type="button" onClick={onBack}>
             Back
           </button>
 
@@ -153,10 +124,7 @@ export default function PaymentHistory({
   return (
     <section className="history-page">
       <div className="page-header">
-        <button
-          type="button"
-          onClick={onBack}
-        >
+        <button type="button" onClick={onBack}>
           Back
         </button>
 
@@ -170,10 +138,7 @@ export default function PaymentHistory({
         <div className="payment-card">
           <p className="form-error">{error}</p>
 
-          <button
-            type="button"
-            onClick={loadHistory}
-          >
+          <button type="button" onClick={loadHistory}>
             Try Again
           </button>
         </div>
@@ -182,16 +147,12 @@ export default function PaymentHistory({
       {!error && payments.length === 0 && (
         <div className="payment-card empty-state">
           <h2>No Payments Yet</h2>
-
           <p>
-            Your Campus Pay payment history will appear here
-            after you create a payment request.
+            Your Campus Pay payment history will appear here after
+            you create a payment.
           </p>
 
-          <button
-            type="button"
-            onClick={onBack}
-          >
+          <button type="button" onClick={onBack}>
             Back to Dashboard
           </button>
         </div>
@@ -200,19 +161,14 @@ export default function PaymentHistory({
       {!error && payments.length > 0 && (
         <div className="history-list">
           {payments.map((payment) => (
-            <article
-              className="history-card"
-              key={payment.id}
-            >
+            <article className="history-card" key={payment.id}>
               <div className="history-card-header">
                 <div>
                   <p className="eyebrow">
                     {payment.reference || "Campus Pay Payment"}
                   </p>
 
-                  <h2>
-                    {payment.beneficiary_name}
-                  </h2>
+                  <h2>{payment.beneficiary_name || "Student"}</h2>
                 </div>
 
                 <span
@@ -268,15 +224,11 @@ export default function PaymentHistory({
                   <strong>Declined</strong>
 
                   {payment.decline_reason && (
-                    <p>
-                      Reason: {payment.decline_reason}
-                    </p>
+                    <p>Reason: {payment.decline_reason}</p>
                   )}
 
                   {payment.decline_reason_details && (
-                    <p>
-                      {payment.decline_reason_details}
-                    </p>
+                    <p>{payment.decline_reason_details}</p>
                   )}
                 </div>
               )}
