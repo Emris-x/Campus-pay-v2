@@ -1,86 +1,99 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-export default function Receipt({ paymentId, onBack }) {
+export default function Receipt({ session, paymentId, onBack }) {
   const [payment, setPayment] = useState(null);
-  const [items, setItems] = useState([]);
+  const [batch, setBatch] = useState(null);
   const [settings, setSettings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (paymentId) {
+    if (paymentId && session?.user?.id) {
       loadReceipt();
     } else {
       setError("Receipt could not be found.");
       setLoading(false);
     }
-  }, [paymentId]);
+  }, [paymentId, session?.user?.id]);
 
   async function loadReceipt() {
     setLoading(true);
     setError("");
 
+    const { data: paymentData, error: paymentError } = await supabase
+      .from("v2_payment_items")
+      .select("*")
+      .eq("id", paymentId)
+      .eq("account_owner_id", session.user.id)
+      .maybeSingle();
+
+    if (paymentError || !paymentData) {
+      setError("Receipt not found.");
+      setLoading(false);
+      return;
+    }
+
+    if (paymentData.status !== "VERIFIED") {
+      setError("This payment does not have a verified receipt yet.");
+      setLoading(false);
+      return;
+    }
+
     const [
-      { data: paymentData, error: paymentError },
-      { data: itemData, error: itemError },
+      { data: batchData, error: batchError },
       { data: settingsData, error: settingsError }
     ] = await Promise.all([
       supabase
         .from("v2_payment_batches")
         .select("*")
-        .eq("id", paymentId)
+        .eq("id", paymentData.batch_id)
+        .eq("account_owner_id", session.user.id)
         .maybeSingle(),
-
-      supabase
-        .from("v2_payment_items")
-        .select("*")
-        .eq("batch_id", paymentId)
-        .order("created_at"),
 
       supabase
         .from("v2_settings")
         .select("*")
     ]);
 
-    if (paymentError || itemError || settingsError) {
+    if (batchError || settingsError) {
       setError("Unable to load the receipt.");
       setLoading(false);
       return;
     }
 
-    if (!paymentData) {
-      setError("Receipt not found.");
-      setLoading(false);
-      return;
-    }
-
     setPayment(paymentData);
-    setItems(itemData || []);
+    setBatch(batchData);
     setSettings(settingsData || []);
     setLoading(false);
   }
 
   function getSetting(key, fallback = "") {
     const setting = settings.find((item) => item.key === key);
-    return setting?.value ?? fallback;
+
+    if (!setting || setting.value === null || setting.value === undefined) {
+      return fallback;
+    }
+
+    return setting.value;
   }
 
   function formatCurrency(amount) {
     return `₦${Number(amount || 0).toLocaleString("en-NG")}`;
   }
 
-  function formatDate(date) {
-    return new Date(date).toLocaleString("en-NG", {
+  function formatDate(value) {
+    if (!value) return "—";
+
+    return new Date(value).toLocaleString("en-NG", {
       dateStyle: "medium",
       timeStyle: "short"
     });
   }
 
   function getWhatsAppLink() {
-    const number = getSetting(
-      "campus_pay_whatsapp",
-      "09113632698"
+    const number = String(
+      getSetting("campus_pay_whatsapp", "09113632698")
     ).replace(/\D/g, "");
 
     const message = encodeURIComponent(
@@ -127,18 +140,21 @@ export default function Receipt({ paymentId, onBack }) {
       <article className="receipt-card">
         <header className="receipt-header">
           <p className="eyebrow">Emris Technologies</p>
+
           <h1>Campus Pay</h1>
+
           <p>Verified Payment Receipt</p>
         </header>
 
         <div className="receipt-status">
-          <strong>PAYMENT SUCCESSFUL</strong>
+          <strong>PAYMENT VERIFIED</strong>
         </div>
 
         <div className="receipt-number">
           <span>Receipt Number</span>
+
           <strong>
-            {payment.receipt_number || "Processing"}
+            {payment.receipt_number || "—"}
           </strong>
         </div>
 
@@ -147,55 +163,119 @@ export default function Receipt({ paymentId, onBack }) {
 
           <div className="receipt-row">
             <span>Name</span>
-            <strong>{payment.beneficiary_full_name}</strong>
+            <strong>{payment.beneficiary_name || "—"}</strong>
           </div>
 
           <div className="receipt-row">
             <span>Matriculation Number</span>
             <strong>
-              {payment.beneficiary_matriculation_number}
+              {payment.beneficiary_matriculation_number || "—"}
             </strong>
           </div>
 
           <div className="receipt-row">
             <span>Registration Number</span>
             <strong>
-              {payment.beneficiary_registration_number}
+              {payment.beneficiary_registration_number || "—"}
             </strong>
           </div>
 
           <div className="receipt-row">
             <span>Faculty</span>
-            <strong>{payment.beneficiary_faculty}</strong>
+            <strong>{payment.beneficiary_faculty || "—"}</strong>
           </div>
 
           <div className="receipt-row">
             <span>Department</span>
-            <strong>{payment.beneficiary_department}</strong>
+            <strong>
+              {payment.beneficiary_department || "—"}
+            </strong>
+          </div>
+        </section>
+
+        <section className="receipt-section">
+          <h2>Payer Information</h2>
+
+          <div className="receipt-row">
+            <span>Payment For</span>
+            <strong>
+              {payment.payment_for === "SOMEONE_ELSE"
+                ? "Someone Else"
+                : "Myself"}
+            </strong>
+          </div>
+
+          <div className="receipt-row">
+            <span>Payer Name</span>
+            <strong>{payment.payer_name || "—"}</strong>
+          </div>
+
+          <div className="receipt-row">
+            <span>Payer Email</span>
+            <strong>{payment.payer_email || "—"}</strong>
+          </div>
+
+          <div className="receipt-row">
+            <span>Payer Phone</span>
+            <strong>{payment.payer_phone || "—"}</strong>
           </div>
         </section>
 
         <section className="receipt-section">
           <h2>Payment Details</h2>
 
-          {items.map((item, index) => (
-            <div className="receipt-payment" key={item.id}>
-              <div>
-                <span>Payment {index + 1}</span>
-                <p>
-                  {item.destination_name_snapshot ||
-                    "Faculty / Department"}
-                </p>
-              </div>
+          <div className="receipt-row">
+            <span>Faculty</span>
+            <strong>
+              {payment.destination_faculty || "—"}
+            </strong>
+          </div>
 
-              <strong>
-                {formatCurrency(item.total_amount)}
-              </strong>
-            </div>
-          ))}
+          <div className="receipt-row">
+            <span>Department</span>
+            <strong>
+              {payment.destination_department || "—"}
+            </strong>
+          </div>
+
+          <div className="receipt-row">
+            <span>Bank</span>
+            <strong>
+              {payment.destination_bank_name || "—"}
+            </strong>
+          </div>
+
+          <div className="receipt-row">
+            <span>Account Name</span>
+            <strong>
+              {payment.destination_account_name || "—"}
+            </strong>
+          </div>
+
+          <div className="receipt-row">
+            <span>Account Number</span>
+            <strong>
+              {payment.destination_account_number || "—"}
+            </strong>
+          </div>
+
+          <div className="receipt-row">
+            <span>Course Amount</span>
+            <strong>
+              {formatCurrency(payment.course_amount)}
+            </strong>
+          </div>
+
+          <div className="receipt-row">
+            <span>Campus Pay Charge</span>
+            <strong>
+              {formatCurrency(payment.campus_pay_charge)}
+            </strong>
+          </div>
 
           <div className="receipt-total">
             <span>Total Paid</span>
+
             <strong>
               {formatCurrency(payment.total_amount)}
             </strong>
@@ -204,24 +284,34 @@ export default function Receipt({ paymentId, onBack }) {
 
         <section className="receipt-section">
           <div className="receipt-row">
+            <span>Payment Reference</span>
+            <strong>{payment.reference || "—"}</strong>
+          </div>
+
+          <div className="receipt-row">
             <span>Verified Date</span>
             <strong>
-              {formatDate(
-                payment.verified_at || payment.updated_at
-              )}
+              {formatDate(payment.verified_at)}
             </strong>
           </div>
+
+          {batch && (
+            <div className="receipt-row">
+              <span>Batch Payments</span>
+              <strong>{batch.item_count || 1}</strong>
+            </div>
+          )}
         </section>
 
         <footer className="receipt-footer">
           <p>
-            Keep this receipt as proof of your Campus Pay
+            Keep this receipt as proof of your verified Campus Pay
             transaction.
           </p>
 
           <p>
-            For your physical bank-verified receipt, contact
-            Campus Pay through WhatsApp.
+            For your physical bank-verified receipt, contact Campus
+            Pay through WhatsApp.
           </p>
 
           <a
@@ -239,4 +329,4 @@ export default function Receipt({ paymentId, onBack }) {
       </article>
     </section>
   );
-            }
+}
